@@ -1,13 +1,30 @@
 (function () {
   'use strict';
 
-  var TFJS_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
-  var PD_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js';
+  // jsdelivr 在国内实测只有 143KB/s（1.47MB 要 10 秒），unpkg 同一文件 1.9 秒。
+  // 所以按 unpkg → jsdelivr → npmmirror 顺序试，第一个成功就用。
+  // 包路径写法 '@scope/name@1.2.3/dist/x.js'；npmmirror 的 URL 规则不同，单独转。
+  function npmMirror(p) {
+    var at = p.indexOf('@', 1);
+    if (at < 0) return null;
+    var name = p.slice(0, at), rest = p.slice(at + 1);
+    var slash = rest.indexOf('/');
+    if (slash < 0) return null;
+    var ver = rest.slice(0, slash), path = rest.slice(slash + 1);
+    return 'https://registry.npmmirror.com/' + name + '/' + ver + '/files/' + path;
+  }
+  var CDNS = [
+    function (p) { return 'https://unpkg.com/' + p; },
+    function (p) { return 'https://cdn.jsdelivr.net/npm/' + p; },
+    npmMirror
+  ];
+  var TFJS_PKG = '@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+  var PD_PKG = '@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js';
   // MoveNet 的 17 个点 → 原来 33 点里的位置（这样规矩代码一行都不用改）
   var MOVENET_MAP = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
-  var HAND_LIB = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.min.js';
+  var HAND_PKG = '@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.min.js';
   // 场景分类：MobileNet v1 0.25（最轻的一档，约 1.9MB），认 ImageNet 1000 类再映射成我们要的几类
-  var SCENE_LIB = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js';
+  var SCENE_PKG = '@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js';
   var SCENE_MODEL = 'https://tfhub.dev/google/tfjs-model/imagenet/mobilenet_v1_025_224/classification/1/default/1/model.json?tfjs-format=file';
   var CFG_KEY = 'photo_helper_config_v1';
   var LOG_KEY = 'photo_helper_feedback_v1';
@@ -90,16 +107,35 @@
     statusEl.textContent = SHORT[text] || text;
     statusEl.className = 'status' + (kind ? ' ' + kind : '');
   }
-  function loadScript(src) {
+  // 单源 30 秒；失败（网络错或超时）就换下一个源，全部失败才 reject
+  function loadOne(src, timeout) {
     return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
       var done = false;
+      function fin(ok, err) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (ok) resolve(); else { if (s.parentNode) s.parentNode.removeChild(s); reject(err); }
+      }
       s.src = src;
-      s.onload = function () { if (!done) { done = true; resolve(); } };
-      s.onerror = function () { if (!done) { done = true; reject(new Error('load failed')); } };
+      s.async = true;
+      s.onload = function () { fin(true); };
+      s.onerror = function () { fin(false, new Error('load failed')); };
       document.head.appendChild(s);
-      setTimeout(function () { if (!done) { done = true; reject(new Error('timeout')); } }, 12000);
+      var timer = setTimeout(function () { fin(false, new Error('timeout')); }, timeout || 30000);
     });
+  }
+
+  // 按 CDNS 顺序逐个试，第一个加载成功即返回
+  function loadScript(pkg) {
+    var i = 0;
+    function next(lastErr) {
+      if (i >= CDNS.length) return Promise.reject(lastErr || new Error('all cdn failed'));
+      var url = CDNS[i++](pkg);
+      return loadOne(url, 30000).catch(function (e) { return next(e); });
+    }
+    return next(null);
   }
 
   function initModel() {
@@ -107,7 +143,7 @@
     hintbox.hidden = false;
     hintbox.className = 'hintbox';
     hintbox.textContent = '正在加载识别（约 2MB，稍等）';
-    return loadScript(TFJS_URL).then(function () {
+    return loadScript(TFJS_PKG).then(function () {
       if (!window.tf) return null;
       // 优先用显卡后端；CPU 后端会卡住主线程，实时会掉成幻灯片
       return window.tf.ready()
@@ -115,7 +151,7 @@
         .catch(function () { return null; })
         .then(function () { return window.tf.ready(); });
     }).then(function () {
-      return loadScript(PD_URL);
+      return loadScript(PD_PKG);
     }).then(function () {
       var pd = window.poseDetection;
       if (!pd || !pd.createDetector) throw new Error('识别库没加载出来');
@@ -226,7 +262,7 @@
   function initHands() {
     if (state.handReady || state.handTried) return;
     state.handTried = true;
-    loadScript(HAND_LIB).then(function () {
+    loadScript(HAND_PKG).then(function () {
       var hpd = window.handPoseDetection;
       if (!hpd) throw new Error('no handPoseDetection');
       return hpd.createDetector(hpd.SupportedModels.MediaPipeHands, {
@@ -360,9 +396,9 @@
     if (state.sceneReady || state.sceneTried) return;
     state.sceneTried = true;
     // 这个库要求页面上已经有 tfjs；身体识别没起来时它可能不在，先补上
-    var pre = window.tf ? Promise.resolve() : loadScript(TFJS_URL);
+    var pre = window.tf ? Promise.resolve() : loadScript(TFJS_PKG);
     pre.then(function () {
-      return loadScript(SCENE_LIB);
+      return loadScript(SCENE_PKG);
     }).then(function () {
       if (!window.mobilenet) throw new Error('no mobilenet');
       return window.mobilenet.load({ version: 1, alpha: 0.25, modelUrl: SCENE_MODEL });
@@ -620,11 +656,15 @@
   }
 
   // 把画面缩到 64x64 算亮度、横线、竖线；只出结论，不存画面
+  // 复用一个 64×64 画布：原来每 1.5 秒 new 一个 canvas + 一个 willReadFrequently
+  // 上下文，用完就扔，纯粹是给 GC 添麻烦
+  var statCanvas = document.createElement('canvas');
+  statCanvas.width = 64; statCanvas.height = 64;
+  var statCtx = statCanvas.getContext('2d', { willReadFrequently: true });
+
   function analyzeImage(source) {
     var N = 64;
-    var tmp = document.createElement('canvas');
-    tmp.width = N; tmp.height = N;
-    var c = tmp.getContext('2d', { willReadFrequently: true });
+    var c = statCtx;
     try { c.drawImage(source, 0, 0, N, N); }
     catch (e) { return {}; }
     var d;

@@ -8,7 +8,7 @@ $Src    = 'C:\Users\H2165\WorkBuddy AI\2026-11-11-00-02-04\deploy'
 $Repo   = 'D:\photo-coach-pages'
 $Key    = Join-Path $Repo '.deploy-key\id_ed25519'
 $Log    = 'D:\photo-coach-pages\.push.log'
-$Files  = @('index.html', 'app.js', 'rules.js', 'style.css')
+$Files  = @('index.html', 'app.js', 'rules.js', 'style.css', 'sw.js')
 
 function Add-Log([string]$msg) {
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
