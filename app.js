@@ -437,7 +437,9 @@
     if (state.demoMode || state.mode === 'demo') return { x: 0, y: 0, w: vw, h: vh };
     var ms = mediaSize(state.mode === 'camera' ? video : photo);
     if (!ms.w || !ms.h) return { x: 0, y: 0, w: vw, h: vh };
-    var scale = Math.min(vw / ms.w, vh / ms.h);
+    // 必须和 CSS 的 object-fit:cover 用同一套算法（铺满后居中裁切），
+    // 否则视频按 cover 显示、骨架线按 contain 画，两者的点会差出一大截。
+    var scale = Math.max(vw / ms.w, vh / ms.h);
     var w = ms.w * scale, h = ms.h * scale;
     return { x: (vw - w) / 2, y: (vh - h) / 2, w: w, h: h };
   }

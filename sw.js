@@ -9,7 +9,7 @@
  *   - CDN 与模型文件（跨域，URL 里带版本号 / 内容不变）：缓存优先，永不重新下。
  */
 
-var CACHE = 'photo-coach-v30';
+var CACHE = 'photo-coach-v31';
 var SHELL = ['./', './index.html', './app.js', './rules.js', './style.css'];
 
 self.addEventListener('install', function (e) {
