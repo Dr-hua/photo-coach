@@ -6,3 +6,11 @@ test-ssh.cmd
 task.xml
 task16.xml
 CON
+
+# 本地测试与备份，不进 Pages 公开目录
+_localtest/
+_pure/
+_backup-v29/
+_patch1.py
+_patch2.py
+_t.js
