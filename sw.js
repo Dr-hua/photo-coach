@@ -42,6 +42,20 @@ function isPinned(url) {
          h === 'storage.googleapis.com';
 }
 
+/* 一条缓存能不能直接交出去？
+ *
+ * opaque 响应（type='opaque'、status=0）是 no-cors 请求的产物。
+ * <script src> 加载跨域脚本时就是 no-cors，所以缓存里存下来的是 opaque。
+ * 但页面上 fetch() / XHR 默认是 cors 模式，把 opaque 交给 cors 请求
+ * 浏览器会直接抛 TypeError: Failed to fetch —— 不是网络问题，是模式不匹配。
+ * 所以：opaque 只能回给 no-cors 请求，cors 请求必须重新联网拿。
+ */
+function servable(hit, req) {
+  if (!hit) return false;
+  if (hit.type === 'opaque') return req.mode === 'no-cors';
+  return true;
+}
+
 self.addEventListener('fetch', function (e) {
   var req = e.request;
   if (req.method !== 'GET') return;
@@ -54,13 +68,17 @@ self.addEventListener('fetch', function (e) {
   if (isPinned(url)) {
     e.respondWith(
       caches.match(req).then(function (hit) {
-        if (hit) return hit;
+        if (servable(hit, req)) return hit;
         return fetch(req).then(function (res) {
           if (res && (res.status === 200 || res.type === 'opaque')) {
             var copy = res.clone();
             caches.open(CACHE).then(function (c) { c.put(req, copy); }).catch(function () {});
           }
           return res;
+        }).catch(function (err) {
+          // 网络断了：只有 no-cors 请求能拿 opaque 兜底，别的必须如实失败
+          if (servable(hit, req)) return hit;
+          throw err;
         });
       })
     );

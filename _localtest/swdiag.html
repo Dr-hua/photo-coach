@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>SW fetch 诊断</title>
+<style>body{font:14px/1.7 system-ui;padding:20px;background:#111;color:#eee}
+.ok{color:#4ADE80}.bad{color:#f87171}.dim{color:#888}</style></head>
+<body>
+<h3>SW fetch 诊断</h3>
+<div id="out"></div>
+<script>
+var out = document.getElementById('out');
+function log(cls, msg) {
+  var d = document.createElement('div');
+  d.className = cls;
+  d.textContent = msg;
+  out.appendChild(d);
+}
+
+(async function () {
+  var url = 'https://unpkg.com/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+  log('dim', 'controller = ' + (navigator.serviceWorker.controller ? '有' : '无'));
+
+  // A. 普通 fetch（会被 SW 拦截）
+  try {
+    var ta = Date.now();
+    var ra = await fetch(url);
+    var ba = await ra.blob();
+    log('ok', 'A. 页面 fetch（走 SW）: ' + ra.status + ' ' + ba.size + 'B ' + (Date.now() - ta) + 'ms  type=' + ra.type);
+  } catch (e) { log('bad', 'A. 页面 fetch 失败: ' + e.name + ' / ' + e.message); }
+
+  // B. 绕开 SW 用 XHR
+  try {
+    var tb = Date.now();
+    var size = await new Promise(function (res, rej) {
+      var x = new XMLHttpRequest();
+      x.open('GET', url, true);
+      x.responseType = 'blob';
+      x.onload = function () { res(x.response.size + ' (status ' + x.status + ')'); };
+      x.onerror = function () { rej(new Error('xhr error')); };
+      x.send();
+    });
+    log('ok', 'B. XHR 直连: ' + size + ' ' + (Date.now() - tb) + 'ms');
+  } catch (e) { log('bad', 'B. XHR 失败: ' + e.message); }
+
+  // C. 缓存里现在有什么
+  var c = await caches.open('photo-coach-v30');
+  var hit = await c.match(url);
+  log(hit ? 'ok' : 'bad', 'C. 缓存命中 tfjs: ' + (hit ? hit.status + ' type=' + hit.type : '否'));
+
+  // D. 手动塞一个进去试试
+  try {
+    var rd = await fetch(url, { cache: 'no-store' });
+    await c.put(url, rd.clone());
+    var hit2 = await c.match(url);
+    log('ok', 'D. 手动 caches.put: ' + (hit2 ? '成功 ' + hit2.status : '失败'));
+  } catch (e) { log('bad', 'D. 手动 put 失败: ' + e.name + ' / ' + e.message); }
+
+  // E. 再来一次页面 fetch
+  try {
+    var te = Date.now();
+    var re = await fetch(url);
+    var be = await re.blob();
+    log('ok', 'E. 再次 fetch（应命中缓存）: ' + re.status + ' ' + be.size + 'B ' + (Date.now() - te) + 'ms');
+  } catch (e) { log('bad', 'E. 再次 fetch 失败: ' + e.name + ' / ' + e.message); }
+
+  window.__done = true;
+})();
+</script>
+</body></html>

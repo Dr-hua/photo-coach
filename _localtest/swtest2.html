@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>SW 修复后验证</title>
+<style>body{font:14px/1.7 system-ui;padding:20px;background:#111;color:#eee}
+.ok{color:#4ADE80}.bad{color:#f87171}.dim{color:#888}</style></head>
+<body>
+<h3>Service Worker 修复后验证</h3>
+<div id="out"></div>
+<script>
+var out = document.getElementById('out');
+function log(c, m) { var d = document.createElement('div'); d.className = c; d.textContent = m; out.appendChild(d); }
+
+(async function () {
+  var U = 'https://unpkg.com/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+
+  // 0. SW 状态
+  if (!('serviceWorker' in navigator)) { log('bad', '✗ 不支持 SW'); return; }
+  var reg = await navigator.serviceWorker.ready;
+  log('ok', '✓ SW 就绪 scope=' + reg.scope + ' controller=' + (navigator.serviceWorker.controller ? '有' : '无'));
+
+  var c = await caches.open('photo-coach-v30');
+
+  // 1. cors fetch（修复前必失败）
+  try {
+    var t1 = Date.now(), r1 = await fetch(U), b1 = await r1.blob();
+    log('ok', '✓ [1] 页面 fetch（cors）: ' + r1.status + ' ' + b1.size + 'B ' + (Date.now() - t1) + 'ms type=' + r1.type);
+  } catch (e) { log('bad', '✗ [1] 页面 fetch（cors）失败: ' + e.name + ' / ' + e.message); }
+
+  // 2. script 标签加载（no-cors，应命中 opaque 缓存）
+  try {
+    var t2 = Date.now();
+    await new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = U;
+      s.onload = function () { res(); };
+      s.onerror = function () { rej(new Error('script onerror')); };
+      document.head.appendChild(s);
+    });
+    log(window.tf ? 'ok' : 'bad', '✓ [2] script 标签加载: ' + (Date.now() - t2) + 'ms  ' +
+        (window.tf ? 'window.tf 版本 ' + tf.version.tfjs : '但 window.tf 不存在'));
+  } catch (e) { log('bad', '✗ [2] script 标签加载失败: ' + e.message); }
+
+  // 3. 缓存里那条 opaque 还在不在
+  var hit = await c.match(U);
+  log(hit ? 'ok' : 'dim', '[3] 缓存中 tfjs: ' + (hit ? 'type=' + hit.type + ' status=' + hit.status : '无'));
+
+  // 4. 二次 cors fetch（应走真实网络，不能把 opaque 交出去）
+  try {
+    var t4 = Date.now(), r4 = await fetch(U), b4 = await r4.blob();
+    log('ok', '✓ [4] 二次 fetch（cors）: ' + r4.status + ' ' + b4.size + 'B ' + (Date.now() - t4) + 'ms type=' + r4.type);
+    log(r4.type !== 'opaque' ? 'ok' : 'bad', r4.type !== 'opaque' ? '✓ 没有把 opaque 塞给 cors 请求（无 TypeError）' : '✗ 仍然是 opaque');
+  } catch (e) { log('bad', '✗ [4] 二次 fetch 失败: ' + e.name + ' / ' + e.message); }
+
+  // 5. 同源资源
+  try {
+    var t5 = Date.now(), r5 = await fetch('./app.js?v=30');
+    log(r5.ok ? 'ok' : 'bad', '✓ [5] 同源 app.js: ' + r5.status + ' ' + (Date.now() - t5) + 'ms');
+  } catch (e) { log('bad', '✗ [5] 同源失败: ' + e.message); }
+
+  window.__done = true;
+})();
+</script>
+</body></html>
